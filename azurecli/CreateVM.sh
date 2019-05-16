@@ -1,3 +1,6 @@
+#!/bin/bash
+
+set -euo pipefail
 
 echo USERNAME=azureuser
 echo PASSWORD=$(openssl rand -base64 32)
