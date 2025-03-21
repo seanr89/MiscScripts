@@ -14,3 +14,14 @@ A collection of bash and powershell commands/scripts to handle easier applicatio
 ## Bash Cli Login
 
 Run command `az login`
+
+
+## scripts
+
+### pod-versioning
+To save to a JSON file: ./get-pod-versions.sh <your-namespace> json
+To save to a TXT file (or if you omit the second argument): ./get-pod-versions.sh <your-namespace>
+```
+./get-pod-versions.sh my-namespace json
+```
+
