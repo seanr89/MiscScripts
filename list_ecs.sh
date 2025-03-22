@@ -23,6 +23,18 @@ if [ -z "$(aws sts get-caller-identity --output text --query 'Arn')" ]; then
   exit 1
 fi
 
+list_ecs_task_definitions() {
+  echo "Listing ECS task definitions..."
+
+  # Get list of ECS task definitions
+  aws ecs list-task-definitions --region $INPUT_REGION --query taskDefinitionArns --output text | while read task_arn; do
+    if [ -n "$task_arn" ]; then
+      aws ecs describe-task-definition --region $INPUT_REGION --task-definition "$task_arn" --query "taskDefinition.{Family:family, Revision:revision, ContainerDefinitions:containerDefinitions[*].{Name:name, Image:image}}" --output json
+      echo "--------------------------------------------------------"
+    fi
+  done
+}
+
 # Function to list ECS processes in a cluster
 list_ecs_processes() {
   local cluster_name="$1"
@@ -64,8 +76,11 @@ fargate_clusters=$(echo "$clusters" | grep "fargate")
 # Loop through each cluster and list processes
 while read cluster_arn; do
   cluster_name=$(echo "$cluster_arn" | awk -F/ '{print $2}')
-  list_ecs_processes "$cluster_name"
+  echo "Cluster: $cluster_name"
+  ##list_ecs_processes "$cluster_name"
 done <<< "$faragte_clusters"
+
+list_ecs_task_definitions
 
 echo "ECS process listing completed."
 exit 0
