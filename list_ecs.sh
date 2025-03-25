@@ -2,14 +2,16 @@
 
 # Script to list ECS processes using AWS CLI
 
-# Usage: ./list_ecs.sh <input_region>
+# Usage: ./list_ecs.sh <input_region> <output_file>
+# Example: ./list_ecs.sh us-east-1 output.json
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <input_region>"
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <input_region> <output_file>"
   exit 1
 fi
 
 INPUT_REGION="$1"
+OUTPUT_FILE="$2"
 
 # Check if AWS CLI is installed
 if ! command -v aws &> /dev/null; then
@@ -25,60 +27,80 @@ fi
 
 list_ecs_task_definitions() {
   echo "Listing ECS task definitions..."
+  local task_count=0
+  local definitions="[" # Start JSON array
 
   # Get list of ECS task definitions
-  aws ecs list-task-definitions --region $INPUT_REGION --query taskDefinitionArns --output text | while read task_arn; do
-    if [ -n "$task_arn" ]; then
-      aws ecs describe-task-definition --region $INPUT_REGION --task-definition "$task_arn" --query "taskDefinition.{Family:family, Revision:revision, ContainerDefinitions:containerDefinitions[*].{Name:name, Image:image}}" --output json
-      echo "--------------------------------------------------------"
+  aws ecs list-task-definitions --region $INPUT_REGION --query taskDefinitionArns | while read task_arn; do
+    # Remove the trailing comma from task_arn
+    task_arn=${task_arn%,}
+
+    # Skip if task_arn is empty or contains [ or ]
+    if [[ -n "$task_arn" && "$task_arn" != *'['* && "$task_arn" != *']'* ]]; then
+      definition=$(aws ecs describe-task-definition --region $INPUT_REGION --task-definition $task_arn --query "taskDefinition.{Family:family, Revision:revision, ContainerDefinitions:containerDefinitions[*].{Name:name, Image:image}}" --output json)
+      # Add comma before subsequent entries
+      if ((task_count > 0)); then
+        definitions+=","
+      fi
+      definitions+="$definition" # Append definition to JSON array
+      ((task_count++))
     fi
   done
+  definitions+="]" # End JSON array
+  echo "Found $task_count task definitions."
+
+  # Write JSON to file
+  echo "$definitions" > "$OUTPUT_FILE"
+  echo "Task definitions written to $OUTPUT_FILE"
 }
 
-# Function to list ECS processes in a cluster
-list_ecs_processes() {
-  local cluster_name="$1"
+# Function to list ECS tasks within a cluster
+list_ecs_tasks() {
+  local cluster_arn="$1"
+  local cluster_name=$(echo "$cluster_arn" | awk -F/ '{print $2}') # Extract cluster name
+  echo "Cluster: $cluster_name"
+  local tasks_output="["
+  local task_count=0
 
-  echo "Listing ECS processes in cluster: $cluster_name"
+  # Get list of tasks in the cluster
+  local task_arns=$(aws ecs list-tasks --cluster "$cluster_arn" --region "$INPUT_REGION" --query taskArns --output text)
 
-  aws ecs list-task-definitions --query 'taskDefinitionArns[*]' --output text | \
-  while read arn; do
-    aws ecs describe-task-definition --task-definition "$arn" --query "containerDefinitions[*].image" --output text;
-  done
+  if [ -n "$task_arns" ]; then
+    # Describe the tasks to get more details
+    local tasks=$(aws ecs describe-tasks --cluster "$cluster_arn" --tasks "$task_arns" --region "$INPUT_REGION" --output json)
+     # Add comma before subsequent entries
 
-  # aws ecs list-tasks --region $INPUT_REGION --cluster "$cluster_name" --query taskArns --output text | while read task_arn; do
-  #   if [ -n "$task_arn" ]; then
-  #     aws ecs describe-tasks --cluster "$cluster_name" --tasks "$task_arn" --query "tasks[*].{TaskArn:taskArn, TaskDefinitionArn:taskDefinitionArn, LastStatus:lastStatus, DesiredStatus:desiredStatus, ContainerDetails:containers[*].{ContainerName:name, Image:image}}" --output json
-  #     echo "--------------------------------------------------------"
-  #   fi
-  # done
-
-  # List services.
-  # aws ecs list-services --region $INPUT_REGION --cluster "$cluster_name" --query serviceArns --output text | while read service_arn; do
-  #   if [ -n "$service_arn" ]; then
-  #     aws ecs describe-services --cluster "$cluster_name" --services "$service_arn" --query "services[*].{ServiceName:serviceName, TaskDefinition:taskDefinition, DesiredCount:desiredCount, RunningCount:runningCount, PendingCount:pendingCount}" --output json
-  #     echo "--------------------------------------------------------"
-  #   fi
-  # done
+    for task in $tasks;
+    do
+      if ((task_count > 0)); then
+        tasks_output+=","
+      fi
+      tasks_output+="$task"
+      ((task_count++))
+    done
+    tasks_output+="]"
+    echo "$tasks_output" > "$OUTPUT_FILE"
+    echo "tasks written to $OUTPUT_FILE"
+  else
+    echo "  No tasks found in cluster $cluster_name"
+  fi
 }
 
 # Get list of ECS clusters
-clusters=$(aws ecs list-clusters --region $INPUT_REGION --query clusterArns --output text)
+cluster_arns=$(aws ecs list-clusters --region $INPUT_REGION --query clusterArns --output text)
 
-if [ -z "$clusters" ]; then
+if [ -z "$cluster_arns" ]; then
   echo "No ECS clusters found."
   exit 0
 fi
 
 # Filter clusters to only include those containing "fargate"
-fargate_clusters=$(echo "$clusters" | grep "fargate")
+fargate_clusters=$(echo "$cluster_arns" | grep "fargate")
 
-# Loop through each cluster and list processes
+# Loop through each Fargate cluster and list tasks
 while read cluster_arn; do
-  cluster_name=$(echo "$cluster_arn" | awk -F/ '{print $2}')
-  echo "Cluster: $cluster_name"
-  ##list_ecs_processes "$cluster_name"
-done <<< "$faragte_clusters"
+  list_ecs_tasks "$cluster_arn"
+done <<< "$fargate_clusters"
 
 list_ecs_task_definitions
 
